@@ -9,8 +9,9 @@ dotenv.config()
 
 /**
  * @typedef {Object} ToolSequenceStep
- * @property {string} toolName - Name of the tool to call
- * @property {Object<string, string>} [inputMapping] - Map of input parameters to previous step outputs using JSONPath strings (e.g., { foo: '$.bar' }). Only valid JSONPath strings (starting with '$') are supported.
+ * @property {string} [type] - Step type: 'tool-call' (default) or 'context-transform'.
+ * @property {string} toolName - Name of the tool to call (for 'tool-call' steps)
+ * @property {Object<string, string|Object>} [inputMapping] - For 'tool-call', maps input parameters to previous step outputs using JSONPath strings or nested objects. For 'context-transform', maps context keys to JSONPath strings to extract from the current context. Only valid JSONPath strings (starting with '$') are supported.
  * @property {Object} [staticInputs] - Static input values
  * @property {Object<string, string>} [outputMapping] - Object mapping output keys to JSONPath strings (e.g., { bar: '$.foo', b: '$.a.b' }). Only valid JSONPath strings (starting with '$') are supported.
  * @property {('json'|'text')} [outputType] - Output type: 'json' (default) or 'text'
@@ -35,6 +36,23 @@ dotenv.config()
  * @property {ToolSequenceStep[]} [sequence] - Optional sequence of tool calls with data dependencies
  * @property {boolean} [runAll] - Optional run all tools
  */
+
+function assignInputMapping(target, mapping, outputs, args = {}) {
+  for (const [inputKey, jsonPathOrObj] of Object.entries(mapping)) {
+    if (typeof jsonPathOrObj === 'string') {
+      if (!jsonPathOrObj.trim().startsWith('$')) {
+        throw new Error(`inputMapping for key '${inputKey}' must be a valid JSONPath string starting with '$'. Got: '${jsonPathOrObj}'`)
+      }
+      const result = JSONPath({ path: jsonPathOrObj, json: outputs, ...args })
+      target[inputKey] = result
+    } else if (typeof jsonPathOrObj === 'object' && jsonPathOrObj !== null) {
+      target[inputKey] = {}
+      assignInputMapping(target[inputKey], jsonPathOrObj, outputs)
+    } else {
+      throw new Error(`inputMapping for key '${inputKey}' must be a JSONPath string or nested object. Got: ${jsonPathOrObj}`)
+    }
+  }
+}
 
 class MCPClient {
   /**
@@ -180,6 +198,13 @@ class MCPClient {
     console.log('Executing tool sequence...')
 
     for (const step of sequence) {
+      const stepType = step.type || 'tool-call'
+      if (stepType === 'context-transform') {
+        assignInputMapping(this.sequenceContext, step.inputMapping, this.sequenceContext, step.jsonPathArgs)
+        console.log('Context after transform:', this.sequenceContext)
+        continue
+      }
+      // Default: tool-call
       const tool = this.tools.find((t) => t.name === step.toolName)
       if (!tool) {
         console.error(`Tool ${step.toolName} not found`)
@@ -197,22 +222,6 @@ class MCPClient {
 
       // Map previous outputs to (possibly nested) inputs
       if (step.inputMapping) {
-        function assignInputMapping(target, mapping, outputs) {
-          for (const [inputKey, jsonPathOrObj] of Object.entries(mapping)) {
-            if (typeof jsonPathOrObj === 'string') {
-              if (!jsonPathOrObj.trim().startsWith('$')) {
-                throw new Error(`inputMapping for key '${inputKey}' must be a valid JSONPath string starting with '$'. Got: '${jsonPathOrObj}'`)
-              }
-              const result = JSONPath({ path: jsonPathOrObj, json: outputs })
-              target[inputKey] = result
-            } else if (typeof jsonPathOrObj === 'object' && jsonPathOrObj !== null) {
-              target[inputKey] = {}
-              assignInputMapping(target[inputKey], jsonPathOrObj, outputs)
-            } else {
-              throw new Error(`inputMapping for key '${inputKey}' must be a JSONPath string or nested object. Got: ${jsonPathOrObj}`)
-            }
-          }
-        }
         assignInputMapping(params, step.inputMapping, this.sequenceContext)
       }
 
@@ -352,10 +361,19 @@ async function main(config = {}) {
       },
       {
         toolName: 'list-endpoints',
-        outputMapping: { endpoints: '$.~' },
+        outputMapping: { endpoints: '$.*~' },
         outputType: 'json',
         inputMapping: {
           title: '$.specs.0.title',
+        },
+      },
+      {
+        type: 'context-transform',
+        jsonPathArgs: {
+          wrap: false,
+        },
+        inputMapping: {
+          endpoint: '$.endpoints[0]',
         },
       },
       {
