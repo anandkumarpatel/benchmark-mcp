@@ -2,6 +2,7 @@ import { Faker, en } from '@faker-js/faker'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import dotenv from 'dotenv'
+import metrics from './metrics.js'
 
 dotenv.config()
 
@@ -24,13 +25,14 @@ dotenv.config()
 /**
  * @typedef {Object} LoadTestConfig
  * @property {string} serverUrl - URL of the MCP server
- * @property {number} [numCalls] - Number of tool calls to make
+ * @property {number} numCalls - Number of tool calls to make
  * @property {number} [delayBetweenCalls] - Delay in milliseconds between calls
  * @property {string[]} [toolNames] - Optional list of specific tool names to call
- * @property {Object.<string, unknown>} [paramOverrides] - Optional parameter overrides for specific tools
+ * @property {Record<string, Record<string, unknown>>} [paramOverrides] - Optional parameter overrides for specific tools
  * @property {boolean} [randomizeParams] - Whether to randomize parameters (default: true)
  * @property {MockDataConfig} [mockData] - Configuration for mock data generation
  * @property {ToolSequenceStep[]} [sequence] - Optional sequence of tool calls with data dependencies
+ * @property {boolean} [runAll] - Optional run all tools
  */
 
 // --- Helpers for deep get/set by path ---
@@ -70,12 +72,21 @@ function setValueByPath(obj, path, value) {
 }
 
 class MCPClient {
-  constructor({ fakerInstance, serverUrl }) {
+  /**
+   * Creates a new MCPClient instance
+   * @param {Object} params - Constructor parameters
+   * @param {Faker} params.fakerInstance - Faker instance for generating mock data
+   * @param {string} params.serverUrl - URL of the MCP server to connect to
+   * @param {LoadTestConfig} params.config - Optional configuration for load testing
+   */
+  constructor({ fakerInstance, serverUrl, config }) {
     this.mcp = new Client({ name: 'mcp-client', version: '1.0.0' })
     this.tools = []
     this.faker = fakerInstance
     this.sequenceState = new Map()
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
+    /** @type {LoadTestConfig} */
+    this.config = config
   }
 
   async connectToServer() {
@@ -85,14 +96,22 @@ class MCPClient {
 
       // List available tools
       const toolsResult = await this.mcp.listTools()
+      // Set tools to all tools initially
       this.tools = toolsResult.tools
       console.log(
         'Connected to server with tools:',
         this.tools.map(({ name }) => name)
       )
+      if (this.config.toolNames) {
+        this.tools = this.tools.filter((tool) => this.config?.toolNames?.includes(tool.name))
+        console.log(`Filtered tools: ${this.tools.map((t) => t.name).join(', ')}`)
+      }
     } catch (e) {
-      console.log('Failed to connect to MCP server: ', e)
+      console.log('Failed to connect to MCP server: ', e.message)
       throw e
+    }
+    if (this.tools.length === 0) {
+      throw new Error('No matching tools found')
     }
   }
 
@@ -161,31 +180,34 @@ class MCPClient {
     return params
   }
 
-  async callTool(tool, config) {
+  async callTool(tool, params) {
     console.log(`\nCalling tool: ${tool.name}`)
-
-    let params = {}
-    if (config.randomizeParams !== false) {
-      params = this.generateRandomParams(tool.inputSchema, config.mockData)
-    }
-
-    // Apply any parameter overrides
-    if (config.paramOverrides?.[tool.name]) {
-      params = { ...params, ...config.paramOverrides[tool.name] }
-    }
-
     console.log('Parameters:', params)
 
+    const callStart = Date.now()
+    let success = false
+    let error = null
+    let duration = 0
     try {
       const result = await this.mcp.callTool({
         name: tool.name,
         arguments: params,
       })
+      if (result.isError) {
+        throw new Error(result?.content?.[0].text)
+      }
       console.log('Tool call result:', result)
+      success = true
       return result
-    } catch (error) {
-      console.error(`Error calling tool ${tool.name}:`, error)
-      throw error
+    } catch (err) {
+      error = err
+      console.error(`Error calling tool ${tool.name}:`, error.message)
+    } finally {
+      duration = Date.now() - callStart
+      metrics.record(tool.name, success, duration, error)
+      if (this.config.delayBetweenCalls) {
+        await new Promise((resolve) => setTimeout(resolve, this.config.delayBetweenCalls))
+      }
     }
   }
 
@@ -246,18 +268,13 @@ class MCPClient {
         }
       }
 
-      console.log(`Executing ${step.toolName} with params:`, params)
-
       try {
-        const result = await this.mcp.callTool({
-          name: step.toolName,
-          arguments: params,
-        })
+        const result = await this.callTool(tool, params)
 
         // Determine output type (default to 'json')
         const outputType = step.outputType || 'json'
-        let outputToStore = result.content[0].text
-        if (outputType === 'json') {
+        let outputToStore = result?.content?.[0]?.text
+        if (outputType === 'json' && outputToStore) {
           try {
             outputToStore = JSON.parse(outputToStore)
           } catch (e) {
@@ -269,7 +286,7 @@ class MCPClient {
           this.sequenceState.set(step.outputMapping, outputToStore)
         }
 
-        console.log(`Tool call result:`, outputToStore)
+        console.log(`Mapped result to key ${step.outputMapping}`, outputToStore)
       } catch (error) {
         console.error(`Error in sequence step ${step.toolName}:`, error)
         throw error
@@ -277,50 +294,69 @@ class MCPClient {
     }
   }
 
-  async runLoadTest(config) {
+  async runAll() {
+    for (const tool of this.tools) {
+      let params = {}
+      if (this.config.randomizeParams !== false) {
+        params = this.generateRandomParams(tool.inputSchema, this.config.mockData)
+      }
+      if (this.config.paramOverrides?.[tool.name]) {
+        params = { ...params, ...this.config.paramOverrides[tool.name] }
+      }
+
+      await this.callTool(tool, params)
+    }
+  }
+  async runRandomToolCall() {
+    const randomTool = this.tools[Math.floor(Math.random() * this.tools.length)]
+    let params = {}
+    if (this.config.randomizeParams !== false) {
+      params = this.generateRandomParams(randomTool.inputSchema, this.config.mockData)
+    }
+    // Apply any parameter overrides
+    if (this.config.paramOverrides?.[randomTool.name]) {
+      params = { ...params, ...this.config.paramOverrides[randomTool.name] }
+    }
+
+    await this.callTool(randomTool, params)
+  }
+
+  async runLoadTest() {
     if (this.tools.length === 0) {
       console.log('No tools available')
       return
     }
 
-    console.log(`Starting load test with ${config.numCalls} calls`)
-    for (let i = 0; i < config.numCalls; i++) {
-      // If sequence is defined, execute it
-      if (config.sequence) {
-        await this.executeSequence(config.sequence)
-        return
-      }
-
-      // Otherwise, run random tool calls
-      const availableTools = config.toolNames ? this.tools.filter((tool) => config.toolNames.includes(tool.name)) : this.tools
-
-      if (availableTools.length === 0) {
-        console.log('No matching tools found')
-        return
-      }
-
-      console.log(`Available tools: ${availableTools.map((t) => t.name).join(', ')}`)
-
-      const randomTool = availableTools[Math.floor(Math.random() * availableTools.length)]
-
+    console.log(`Starting load test with ${this.config.numCalls} calls`)
+    for (let i = 0; i < this.config.numCalls; i++) {
       try {
-        await this.callTool(randomTool, config)
-      } catch (error) {
-        console.error(`Failed call ${i + 1}/${config.numCalls}:`, error)
-      }
-
-      if (i < config.numCalls - 1) {
-        await new Promise((resolve) => setTimeout(resolve, config.delayBetweenCalls))
+        // If sequence is defined, execute it
+        if (this.config.sequence) {
+          // For sequence, use the first tool name for per-tool stats
+          await this.executeSequence(this.config.sequence)
+        } else if (this.config.runAll) {
+          await this.runAll()
+        } else {
+          await this.runRandomToolCall()
+        }
+      } catch (err) {
+        console.error(`Failed call ${i + 1}/${this.config.numCalls}:`, err)
       }
     }
+
+    metrics.printSummary()
   }
 
   async cleanup() {
     await this.mcp.close()
   }
 }
-
-async function main(config = /** @type {LoadTestConfig} */ (/** @type {Object.<string, unknown>} */ ({}))) {
+/**
+ * Main entry point for running the MCP load test
+ * @param {Partial<LoadTestConfig>} config - Configuration options for the load test
+ * @returns {Promise<void>}
+ */
+async function main(config = {}) {
   if (!config.serverUrl) {
     console.log('Usage: main({ serverUrl: "http://server-url", ...config })')
     return
@@ -328,8 +364,8 @@ async function main(config = /** @type {LoadTestConfig} */ (/** @type {Object.<s
 
   // Example sequence configuration
   const defaultConfig = /** @type {LoadTestConfig} */ {
-    numCalls: 50,
-    delayBetweenCalls: 1000,
+    numCalls: 1,
+    delayBetweenCalls: 10,
     randomizeParams: true,
     mockData: {
       locale: 'en',
@@ -338,17 +374,31 @@ async function main(config = /** @type {LoadTestConfig} */ (/** @type {Object.<s
         name: 'fullName',
       },
     },
+
+    // runAll: true,
+
     sequence: [
+      {
+        toolName: 'list-specs',
+        outputMapping: 'specs',
+        outputType: 'json',
+      },
       {
         toolName: 'list-endpoints',
         outputMapping: 'endpoints',
         outputType: 'json',
+        inputMapping: {
+          title: 'specs.0.title',
+        },
       },
       {
         toolName: 'get-endpoint',
         staticInputs: {
-          path: '/dog',
+          path: '/ffff',
           method: 'put',
+        },
+        inputMapping: {
+          title: 'specs.0.title',
         },
         outputMapping: 'endpoint',
         outputType: 'json',
@@ -357,15 +407,17 @@ async function main(config = /** @type {LoadTestConfig} */ (/** @type {Object.<s
   }
 
   // Merge provided config with defaults
+  /** @type {LoadTestConfig} */
+  // @ts-ignore
   const mergedConfig = { ...defaultConfig, ...config }
 
   // Initialize faker with locale if specified
   const fakerInstance = new Faker({ locale: [en] })
-  const mcpClient = new MCPClient({ fakerInstance, serverUrl: mergedConfig.serverUrl })
+  const mcpClient = new MCPClient({ fakerInstance, serverUrl: mergedConfig.serverUrl, config: mergedConfig })
 
   try {
     await mcpClient.connectToServer()
-    await mcpClient.runLoadTest(mergedConfig)
+    await mcpClient.runLoadTest()
   } finally {
     await mcpClient.cleanup()
   }

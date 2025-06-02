@@ -50,3 +50,8 @@ Generated parameters: { param1: true, param2: "xyz789" }
 Tool call result: { ... }
 ...
 ```
+
+## Roadmap
+
+- For Sequence, Add a way to run functions on output. for example, select random key from object or array.
+- Write better docs
