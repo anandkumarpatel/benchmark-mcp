@@ -199,7 +199,9 @@ class MCPClient {
     for (const step of sequence) {
       const tool = this.tools.find((t) => t.name === step.toolName)
       if (!tool) {
-        console.error(`Tool ${step.toolName} not found`)
+        const errMsg = `Tool ${step.toolName} not found`
+        console.error(errMsg)
+        metrics.record(step.toolName, false, 0, errMsg)
         continue
       }
 
@@ -312,17 +314,18 @@ class MCPClient {
 }
 /**
  * Main entry point for running the MCP load test
- * @param {Partial<LoadTestConfig>} config - Configuration options for the load test
+ * @param {LoadTestConfig} config - Configuration options for the load test
  * @returns {Promise<void>}
  */
-async function main(config = {}) {
+async function main(config) {
   if (!config.serverUrl) {
     console.log('Usage: main({ serverUrl: "http://server-url", ...config })')
     return
   }
 
   // Example sequence configuration
-  const defaultConfig = /** @type {LoadTestConfig} */ {
+  /** @type {Partial<LoadTestConfig>} */
+  const defaultConfig = {
     numCalls: 1,
     delayBetweenCalls: 10,
     randomizeParams: true,
@@ -364,8 +367,6 @@ async function main(config = {}) {
   }
 
   // Merge provided config with defaults
-  /** @type {LoadTestConfig} */
-  // @ts-ignore
   const mergedConfig = { ...defaultConfig, ...config }
 
   // Initialize faker with locale if specified
@@ -390,5 +391,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log('Usage: node src/index.js <server_url>')
     process.exit(1)
   }
+  // @ts-expect-error
   main({ serverUrl }).then(() => process.exit(0))
 }
