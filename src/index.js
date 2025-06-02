@@ -3,15 +3,16 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import dotenv from 'dotenv'
 import metrics from './metrics.js'
+import { JSONPath } from 'jsonpath-plus'
 
 dotenv.config()
 
 /**
  * @typedef {Object} ToolSequenceStep
  * @property {string} toolName - Name of the tool to call
- * @property {Object} [inputMapping] - Map of input parameters to previous step outputs
+ * @property {Object<string, string>} [inputMapping] - Map of input parameters to previous step outputs using JSONPath strings (e.g., { foo: '$.bar' }). Only valid JSONPath strings (starting with '$') are supported.
  * @property {Object} [staticInputs] - Static input values
- * @property {string} [outputMapping] - Variable name to store the output
+ * @property {Object<string, string>} [outputMapping] - Object mapping output keys to JSONPath strings (e.g., { bar: '$.foo', b: '$.a.b' }). Only valid JSONPath strings (starting with '$') are supported.
  * @property {('json'|'text')} [outputType] - Output type: 'json' (default) or 'text'
  */
 
@@ -35,42 +36,6 @@ dotenv.config()
  * @property {boolean} [runAll] - Optional run all tools
  */
 
-// --- Helpers for deep get/set by path ---
-/**
- * Get value from object by dot/bracket path (e.g., 'a.b[0].c')
- * @param {object} obj
- * @param {string} path
- * @returns {any}
- */
-function getValueByPath(obj, path) {
-  if (!obj || typeof path !== 'string') return undefined
-  // Split on dots, but also handle [index] for arrays
-  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.')
-  return parts.reduce((acc, key) => (acc !== undefined ? acc[key] : undefined), obj)
-}
-
-/**
- * Set value in object by dot/bracket path (e.g., 'a.b[0].c'), creating intermediate objects/arrays as needed
- * @param {object} obj
- * @param {string} path
- * @param {any} value
- */
-function setValueByPath(obj, path, value) {
-  if (!obj || typeof path !== 'string') return
-  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.')
-  let curr = obj
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i]
-    const nextKey = parts[i + 1]
-    if (!(key in curr) || typeof curr[key] !== 'object') {
-      // If nextKey is a number, create array, else object
-      curr[key] = /^\d+$/.test(nextKey) ? [] : {}
-    }
-    curr = curr[key]
-  }
-  curr[parts[parts.length - 1]] = value
-}
-
 class MCPClient {
   /**
    * Creates a new MCPClient instance
@@ -83,7 +48,7 @@ class MCPClient {
     this.mcp = new Client({ name: 'mcp-client', version: '1.0.0' })
     this.tools = []
     this.faker = fakerInstance
-    this.sequenceState = new Map()
+    this.sequenceState = {}
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
     /** @type {LoadTestConfig} */
     this.config = config
@@ -232,36 +197,30 @@ class MCPClient {
 
       // Map previous outputs to (possibly nested) inputs
       if (step.inputMapping) {
-        for (const [inputPath, outputRef] of Object.entries(step.inputMapping)) {
-          // outputRef: 'stepName.some.deep.key'
-          const dotIdx = outputRef.indexOf('.')
-          let stepName, outputPath
-          if (dotIdx === -1) {
-            stepName = outputRef
-            outputPath = ''
-          } else {
-            stepName = outputRef.slice(0, dotIdx)
-            outputPath = outputRef.slice(dotIdx + 1)
-          }
-          const previousOutput = this.sequenceState.get(stepName)
-          let value
-          if (previousOutput !== undefined) {
-            if (outputPath) {
-              value = getValueByPath(previousOutput, outputPath)
+        function assignInputMapping(target, mapping, outputs) {
+          for (const [inputKey, jsonPathOrObj] of Object.entries(mapping)) {
+            if (typeof jsonPathOrObj === 'string') {
+              if (!jsonPathOrObj.trim().startsWith('$')) {
+                throw new Error(`inputMapping for key '${inputKey}' must be a valid JSONPath string starting with '$'. Got: '${jsonPathOrObj}'`)
+              }
+              const result = JSONPath({ path: jsonPathOrObj, json: outputs })
+              target[inputKey] = result
+            } else if (typeof jsonPathOrObj === 'object' && jsonPathOrObj !== null) {
+              target[inputKey] = {}
+              assignInputMapping(target[inputKey], jsonPathOrObj, outputs)
             } else {
-              value = previousOutput
-            }
-            if (value !== undefined) {
-              setValueByPath(params, inputPath, value)
+              throw new Error(`inputMapping for key '${inputKey}' must be a JSONPath string or nested object. Got: ${jsonPathOrObj}`)
             }
           }
         }
+        assignInputMapping(params, step.inputMapping, this.sequenceState)
       }
 
       // Generate random params for remaining required fields (shallow only)
       const schema = tool.inputSchema
       if (schema?.properties) {
         for (const [key, prop] of Object.entries(schema.properties)) {
+          // TODO, add setting that randoms all fields or a set of fields
           if (params[key] === undefined && prop.required) {
             params[key] = this.generateValueForField(key, prop)
           }
@@ -283,10 +242,18 @@ class MCPClient {
         }
         // Store output if mapping is specified
         if (step.outputMapping) {
-          this.sequenceState.set(step.outputMapping, outputToStore)
+          if (typeof step.outputMapping === 'object' && step.outputMapping !== null) {
+            // Only support JSONPath strings (must start with $)
+            for (const [key, path] of Object.entries(step.outputMapping)) {
+              if (!path || typeof path !== 'string' || !path.trim().startsWith('$')) {
+                throw new Error(`outputMapping for key '${key}' must be a valid JSONPath string starting with '$'. Got: '${path}'`)
+              }
+              const result = JSONPath({ path, json: outputToStore })
+              this.sequenceState[key] = result
+            }
+            console.log(`Mapped result to keys`, this.sequenceState)
+          }
         }
-
-        console.log(`Mapped result to key ${step.outputMapping}`, outputToStore)
       } catch (error) {
         console.error(`Error in sequence step ${step.toolName}:`, error)
         throw error
@@ -380,15 +347,15 @@ async function main(config = {}) {
     sequence: [
       {
         toolName: 'list-specs',
-        outputMapping: 'specs',
+        outputMapping: { specs: '$' },
         outputType: 'json',
       },
       {
         toolName: 'list-endpoints',
-        outputMapping: 'endpoints',
+        outputMapping: { endpoints: '$.~' },
         outputType: 'json',
         inputMapping: {
-          title: 'specs.0.title',
+          title: '$.specs.0.title',
         },
       },
       {
@@ -398,9 +365,9 @@ async function main(config = {}) {
           method: 'put',
         },
         inputMapping: {
-          title: 'specs.0.title',
+          title: '$.specs.0.title',
         },
-        outputMapping: 'endpoint',
+        outputMapping: { endpoint: '$' },
         outputType: 'json',
       },
     ],
