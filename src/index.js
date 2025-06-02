@@ -3,17 +3,16 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import dotenv from 'dotenv'
 import metrics from './metrics.js'
-import { JSONPath } from 'jsonpath-plus'
+import jq from 'node-jq'
 
 dotenv.config()
 
 /**
  * @typedef {Object} ToolSequenceStep
- * @property {string} [type] - Step type: 'tool-call' (default) or 'context-transform'.
- * @property {string} toolName - Name of the tool to call (for 'tool-call' steps)
- * @property {Object<string, string|Object>} [inputMapping] - For 'tool-call', maps input parameters to previous step outputs using JSONPath strings or nested objects. For 'context-transform', maps context keys to JSONPath strings to extract from the current context. Only valid JSONPath strings (starting with '$') are supported.
+ * @property {string} toolName - Name of the tool to call
+ * @property {Object<string, string|Object>} [inputMapping] - For tool calls, maps input parameters to previous step outputs using jq expressions or nested objects. All mapping strings must be valid jq expressions.
  * @property {Object} [staticInputs] - Static input values
- * @property {Object<string, string>} [outputMapping] - Object mapping output keys to JSONPath strings (e.g., { bar: '$.foo', b: '$.a.b' }). Only valid JSONPath strings (starting with '$') are supported.
+ * @property {Object<string, string>} [outputMapping] - Object mapping output keys to jq expressions (e.g., { bar: '.foo', b: '.a.b' }). All mapping strings must be valid jq expressions.
  * @property {('json'|'text')} [outputType] - Output type: 'json' (default) or 'text'
  */
 
@@ -37,19 +36,19 @@ dotenv.config()
  * @property {boolean} [runAll] - Optional run all tools
  */
 
-function assignInputMapping(target, mapping, outputs, args = {}) {
-  for (const [inputKey, jsonPathOrObj] of Object.entries(mapping)) {
-    if (typeof jsonPathOrObj === 'string') {
-      if (!jsonPathOrObj.trim().startsWith('$')) {
-        throw new Error(`inputMapping for key '${inputKey}' must be a valid JSONPath string starting with '$'. Got: '${jsonPathOrObj}'`)
+async function assignInputMapping({ target, mapping, context }) {
+  for (const [inputKey, jqExprOrObj] of Object.entries(mapping)) {
+    if (typeof jqExprOrObj === 'string') {
+      if (!jqExprOrObj.trim().length) {
+        throw new Error(`inputMapping for key '${inputKey}' must be a valid jq expression. Got: '${jqExprOrObj}'`)
       }
-      const result = JSONPath({ path: jsonPathOrObj, json: outputs, ...args })
+      const result = await jq.run(jqExprOrObj, context, { input: 'json', output: 'json' })
       target[inputKey] = result
-    } else if (typeof jsonPathOrObj === 'object' && jsonPathOrObj !== null) {
+    } else if (typeof jqExprOrObj === 'object' && jqExprOrObj !== null) {
       target[inputKey] = {}
-      assignInputMapping(target[inputKey], jsonPathOrObj, outputs)
+      await assignInputMapping({ target: target[inputKey], mapping: jqExprOrObj, context })
     } else {
-      throw new Error(`inputMapping for key '${inputKey}' must be a JSONPath string or nested object. Got: ${jsonPathOrObj}`)
+      throw new Error(`inputMapping for key '${inputKey}' must be a jq expression or nested object. Got: ${jqExprOrObj}`)
     }
   }
 }
@@ -198,13 +197,6 @@ class MCPClient {
     console.log('Executing tool sequence...')
 
     for (const step of sequence) {
-      const stepType = step.type || 'tool-call'
-      if (stepType === 'context-transform') {
-        assignInputMapping(this.sequenceContext, step.inputMapping, this.sequenceContext, step.jsonPathArgs)
-        console.log('Context after transform:', this.sequenceContext)
-        continue
-      }
-      // Default: tool-call
       const tool = this.tools.find((t) => t.name === step.toolName)
       if (!tool) {
         console.error(`Tool ${step.toolName} not found`)
@@ -220,9 +212,9 @@ class MCPClient {
         Object.assign(params, step.staticInputs)
       }
 
-      // Map previous outputs to (possibly nested) inputs
+      // Map input
       if (step.inputMapping) {
-        assignInputMapping(params, step.inputMapping, this.sequenceContext)
+        await assignInputMapping({ target: params, mapping: step.inputMapping, context: this.sequenceContext })
       }
 
       // Generate random params for remaining required fields (shallow only)
@@ -239,7 +231,7 @@ class MCPClient {
       try {
         const result = await this.callTool(tool, params)
 
-        // Determine output type (default to 'json')
+        // Determine output type
         const outputType = step.outputType || 'json'
         let outputToStore = result?.content?.[0]?.text
         if (outputType === 'json' && outputToStore) {
@@ -250,18 +242,9 @@ class MCPClient {
           }
         }
         // Store output if mapping is specified
-        if (step.outputMapping) {
-          if (typeof step.outputMapping === 'object' && step.outputMapping !== null) {
-            // Only support JSONPath strings (must start with $)
-            for (const [key, path] of Object.entries(step.outputMapping)) {
-              if (!path || typeof path !== 'string' || !path.trim().startsWith('$')) {
-                throw new Error(`outputMapping for key '${key}' must be a valid JSONPath string starting with '$'. Got: '${path}'`)
-              }
-              const result = JSONPath({ path, json: outputToStore })
-              this.sequenceContext[key] = result
-            }
-            console.log(`Mapped result to keys`, this.sequenceContext)
-          }
+        if (typeof step.outputMapping === 'object' && step.outputMapping !== null) {
+          await assignInputMapping({ target: this.sequenceContext, mapping: step.outputMapping, context: outputToStore })
+          console.log(`Mapped result to keys`, this.sequenceContext)
         }
       } catch (error) {
         console.error(`Error in sequence step ${step.toolName}:`, error)
@@ -356,36 +339,25 @@ async function main(config = {}) {
     sequence: [
       {
         toolName: 'list-specs',
-        outputMapping: { specs: '$' },
+        outputMapping: { specs: '.' },
         outputType: 'json',
       },
       {
         toolName: 'list-endpoints',
-        outputMapping: { endpoints: '$.*~' },
+        outputMapping: { path: 'keys_unsorted[0]', method: '.[keys_unsorted[0]] | keys_unsorted[0]' },
         outputType: 'json',
         inputMapping: {
-          title: '$.specs.0.title',
-        },
-      },
-      {
-        type: 'context-transform',
-        jsonPathArgs: {
-          wrap: false,
-        },
-        inputMapping: {
-          endpoint: '$.endpoints[0]',
+          title: '.specs[0].title',
         },
       },
       {
         toolName: 'get-endpoint',
-        staticInputs: {
-          path: '/ffff',
-          method: 'put',
-        },
         inputMapping: {
-          title: '$.specs.0.title',
+          path: '.path',
+          method: '.method',
+          title: '.specs[0].title',
         },
-        outputMapping: { endpoint: '$' },
+        outputMapping: { endpoint: '.' },
         outputType: 'json',
       },
     ],

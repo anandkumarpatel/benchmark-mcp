@@ -11,7 +11,7 @@
     "@faker-js/faker": "^9.8.0",
     "@modelcontextprotocol/sdk": "^1.11.4",
     "dotenv": "^16.4.5",
-    "jsonpath-plus": "^10.3.0"
+    "node-jq": "^6.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.24"
