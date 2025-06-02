@@ -48,7 +48,7 @@ class MCPClient {
     this.mcp = new Client({ name: 'mcp-client', version: '1.0.0' })
     this.tools = []
     this.faker = fakerInstance
-    this.sequenceState = {}
+    this.sequenceContext = {}
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
     /** @type {LoadTestConfig} */
     this.config = config
@@ -213,7 +213,7 @@ class MCPClient {
             }
           }
         }
-        assignInputMapping(params, step.inputMapping, this.sequenceState)
+        assignInputMapping(params, step.inputMapping, this.sequenceContext)
       }
 
       // Generate random params for remaining required fields (shallow only)
@@ -249,9 +249,9 @@ class MCPClient {
                 throw new Error(`outputMapping for key '${key}' must be a valid JSONPath string starting with '$'. Got: '${path}'`)
               }
               const result = JSONPath({ path, json: outputToStore })
-              this.sequenceState[key] = result
+              this.sequenceContext[key] = result
             }
-            console.log(`Mapped result to keys`, this.sequenceState)
+            console.log(`Mapped result to keys`, this.sequenceContext)
           }
         }
       } catch (error) {
