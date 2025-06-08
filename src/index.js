@@ -4,8 +4,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import dotenv from 'dotenv'
 import metrics from './metrics.js'
 import jq from 'node-jq'
+import pino from 'pino'
+import pretty from 'pino-pretty'
 
 dotenv.config()
+
+const logger = pino(pretty())
 
 /**
  * @typedef {Object} ToolSequenceStep
@@ -80,16 +84,13 @@ class MCPClient {
       const toolsResult = await this.mcp.listTools()
       // Set tools to all tools initially
       this.tools = toolsResult.tools
-      console.log(
-        'Connected to server with tools:',
-        this.tools.map(({ name }) => name)
-      )
+      logger.info({ tools: this.tools.map(({ name }) => name) }, 'Connected to server with tools')
       if (this.config.toolNames) {
         this.tools = this.tools.filter((tool) => this.config?.toolNames?.includes(tool.name))
-        console.log(`Filtered tools: ${this.tools.map((t) => t.name).join(', ')}`)
+        logger.info({ filteredTools: this.tools.map((t) => t.name) }, 'Filtered tools')
       }
     } catch (e) {
-      console.log('Failed to connect to MCP server: ', e.message)
+      logger.error({ error: e.message }, 'Failed to connect to MCP server')
       throw e
     }
     if (this.tools.length === 0) {
@@ -163,8 +164,8 @@ class MCPClient {
   }
 
   async callTool(tool, params) {
-    console.log(`\nCalling tool: ${tool.name}`)
-    console.log('Parameters:', params)
+    const l = logger.child({ tool: tool.name })
+    l.info({ tool: tool.name, params }, 'start tool call')
 
     const callStart = Date.now()
     let success = false
@@ -178,12 +179,12 @@ class MCPClient {
       if (result.isError) {
         throw new Error(result?.content?.[0].text)
       }
-      console.log('Tool call result:', result)
+      l.info({ result }, 'finish tool call:')
       success = true
       return result
     } catch (err) {
       error = err
-      console.error(`Error calling tool ${tool.name}:`, error.message)
+      l.error({ error: error.message }, 'error tool call')
     } finally {
       duration = Date.now() - callStart
       metrics.record(tool.name, success, duration, error)
@@ -194,13 +195,13 @@ class MCPClient {
   }
 
   async executeSequence(sequence) {
-    console.log('Executing tool sequence...')
+    logger.info('Executing tool sequence...')
 
     for (const step of sequence) {
       const tool = this.tools.find((t) => t.name === step.toolName)
       if (!tool) {
         const errMsg = `Tool ${step.toolName} not found`
-        console.error(errMsg)
+        logger.error({ error: errMsg })
         metrics.record(step.toolName, false, 0, errMsg)
         continue
       }
@@ -233,23 +234,22 @@ class MCPClient {
       try {
         const result = await this.callTool(tool, params)
 
-        // Determine output type
-        const outputType = step.outputType || 'json'
-        let outputToStore = result?.content?.[0]?.text
-        if (outputType === 'json' && outputToStore) {
-          try {
-            outputToStore = JSON.parse(outputToStore)
-          } catch (e) {
-            console.error(`Failed to parse JSON output for step ${step.toolName}:`, e)
-          }
-        }
-        // Store output if mapping is specified
         if (typeof step.outputMapping === 'object' && step.outputMapping !== null) {
+          const outputType = step.outputType || 'json'
+          let outputToStore = result?.content?.[0]?.text
+          if (outputType === 'json' && outputToStore) {
+            try {
+              outputToStore = JSON.parse(outputToStore)
+            } catch (e) {
+              logger.error({ msg: 'Failed to parse JSON output for step', tool: tool.name, error: e.message })
+              throw e
+            }
+          }
           await assignInputMapping({ target: this.sequenceContext, mapping: step.outputMapping, context: outputToStore })
-          console.log(`Mapped result to keys`, this.sequenceContext)
+          logger.info({ msg: `Mapped result to keys`, tool: tool.name, sequenceContext: this.sequenceContext })
         }
       } catch (error) {
-        console.error(`Error in sequence step ${step.toolName}:`, error)
+        logger.error({ msg: 'Error in sequence step', tool: tool.name, error: error.message })
         throw error
       }
     }
@@ -284,11 +284,11 @@ class MCPClient {
 
   async runLoadTest() {
     if (this.tools.length === 0) {
-      console.log('No tools available')
+      logger.info('No tools available')
       return
     }
 
-    console.log(`Starting load test with ${this.config.numCalls} calls`)
+    logger.info(`Starting load test with ${this.config.numCalls} calls`)
     for (let i = 0; i < this.config.numCalls; i++) {
       try {
         // If sequence is defined, execute it
@@ -301,7 +301,7 @@ class MCPClient {
           await this.runRandomToolCall()
         }
       } catch (err) {
-        console.error(`Failed call ${i + 1}/${this.config.numCalls}:`, err)
+        logger.error(`Failed call ${i + 1}/${this.config.numCalls}:`, err)
       }
     }
 
@@ -319,7 +319,7 @@ class MCPClient {
  */
 async function main(config) {
   if (!config.serverUrl) {
-    console.log('Usage: main({ serverUrl: "http://server-url", ...config })')
+    logger.info('Usage: main({ serverUrl: "http://server-url", ...config })')
     return
   }
 
@@ -363,6 +363,12 @@ async function main(config) {
         outputMapping: { endpoint: '.' },
         outputType: 'json',
       },
+      {
+        toolName: 'search-documentation',
+        staticInputs: {
+          query: 'hello',
+        },
+      },
     ],
   }
 
@@ -388,7 +394,7 @@ export { MCPClient, main }
 if (import.meta.url === `file://${process.argv[1]}`) {
   const serverUrl = process.argv[2]
   if (!serverUrl) {
-    console.log('Usage: node src/index.js <server_url>')
+    logger.info('Usage: node src/index.js <server_url>')
     process.exit(1)
   }
   // @ts-expect-error
