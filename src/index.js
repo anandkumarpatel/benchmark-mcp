@@ -2,14 +2,11 @@ import { Faker, en } from '@faker-js/faker'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import dotenv from 'dotenv'
-import metrics from './metrics.js'
 import jq from 'node-jq'
-import pino from 'pino'
-import pretty from 'pino-pretty'
+import metrics from './metrics.js'
+import { logger } from './logger.js'
 
 dotenv.config()
-
-const logger = pino(pretty())
 
 /**
  * @typedef {Object} ToolSequenceStep
