@@ -184,3 +184,4 @@ Per-tool stats:
 - AI client support
 - Output assertions
 - Support for one-shot tool calls without a persistent connection.
+- support env vars for config
