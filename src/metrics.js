@@ -54,7 +54,7 @@ class Metrics {
     const avg = this.responseTimes.length > 0 ? this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length : 0
     const sorted = [...this.responseTimes].sort((a, b) => a - b)
     const median = sorted.length > 0 ? (sorted.length % 2 === 0 ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2 : sorted[Math.floor(sorted.length / 2)]) : 0
-    const p95 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.95) - 1] : 0
+    const p95 = sorted.length > 0 ? sorted[Math.ceil(sorted.length * 0.95) - 1] : 0
     const perToolStats = {}
     for (const [tool, statRawOrig = {}] of Object.entries(this.perTool)) {
       const { total = 0, success = 0, failure = 0, responseTimes = [] } = statRawOrig
