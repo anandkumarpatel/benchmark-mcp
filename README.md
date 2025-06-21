@@ -16,16 +16,16 @@ A Node.js client for running load tests against a Model Context Protocol (MCP) s
 To run a load test against your MCP server, use the following command:
 
 ```bash
-node src/index.js <server_url>
+node src/run.js <server_url>
 ```
 
 For example:
 
 ```bash
-node src/index.js http://localhost:8080
+node src/run.js http://localhost:8080
 ```
 
-By default, this runs a pre-configured sequence of tool calls once. To customize the load test, you can modify the `defaultConfig` object within `src/index.js` or pass a configuration object when calling the `main` function programmatically.
+By default, this runs a pre-configured sequence of tool calls once. To customize the load test, you can modify the `defaultConfig` object within `src/run.js` or pass a configuration object when calling the `main` function programmatically.
 
 ## Configuration
 
@@ -178,5 +178,9 @@ Per-tool stats:
 
 ## Roadmap
 
-- Support for Server-Sent Events (SSE) streams from the MCP server.
+- CLI management tool
+- oauth2 client support
+- pass-in auth / headers
+- AI client support
+- Output assertions
 - Support for one-shot tool calls without a persistent connection.

@@ -30,7 +30,7 @@ const logger = pino(pretty())
 /**
  * @typedef {Object} LoadTestConfig
  * @property {string} serverUrl - URL of the MCP server
- * @property {number} numCalls - Number of tool calls to make
+ * @property {number} [numCalls] - Number of tool calls to make (default: 1)
  * @property {number} [delayBetweenCalls] - Delay in milliseconds between calls
  * @property {string[]} [toolNames] - Optional list of specific tool names to call
  * @property {Record<string, Record<string, unknown>>} [paramOverrides] - Optional parameter overrides for specific tools
@@ -38,6 +38,7 @@ const logger = pino(pretty())
  * @property {MockDataConfig} [mockData] - Configuration for mock data generation
  * @property {ToolSequenceStep[]} [sequence] - Optional sequence of tool calls with data dependencies
  * @property {boolean} [runAll] - Optional run all tools
+ * @property {import('@faker-js/faker').FakerOptions} [fakerConfig] - Configuration for Faker instance
  */
 
 async function assignInputMapping({ target, mapping, context }) {
@@ -288,8 +289,9 @@ class MCPClient {
       return
     }
 
-    logger.info(`Starting load test with ${this.config.numCalls} calls`)
-    for (let i = 0; i < this.config.numCalls; i++) {
+    const numCalls = this.config.numCalls || 1
+    logger.info(`Starting load test with ${numCalls} calls`)
+    for (let i = 0; i < numCalls; i++) {
       try {
         // If sequence is defined, execute it
         if (this.config.sequence) {
@@ -317,13 +319,12 @@ class MCPClient {
  * @param {LoadTestConfig} config - Configuration options for the load test
  * @returns {Promise<void>}
  */
-async function main(config) {
+async function run(config) {
   if (!config.serverUrl) {
     logger.info('Usage: main({ serverUrl: "http://server-url", ...config })')
     return
   }
 
-  // Example sequence configuration
   /** @type {Partial<LoadTestConfig>} */
   const defaultConfig = {
     numCalls: 1,
@@ -336,47 +337,13 @@ async function main(config) {
         name: 'fullName',
       },
     },
-
-    // runAll: true,
-
-    sequence: [
-      {
-        toolName: 'list-specs',
-        outputMapping: { specs: '.' },
-        outputType: 'json',
-      },
-      {
-        toolName: 'list-endpoints',
-        outputMapping: { path: 'keys_unsorted[0]', method: '.[keys_unsorted[0]] | keys_unsorted[0]' },
-        outputType: 'json',
-        inputMapping: {
-          title: '.specs[0].title',
-        },
-      },
-      {
-        toolName: 'get-endpoint',
-        inputMapping: {
-          path: '.path',
-          method: '.method',
-          title: '.specs[0].title',
-        },
-        outputMapping: { endpoint: '.' },
-        outputType: 'json',
-      },
-      {
-        toolName: 'search-documentation',
-        staticInputs: {
-          query: 'hello',
-        },
-      },
-    ],
+    fakerConfig: { locale: [en] },
   }
 
   // Merge provided config with defaults
   const mergedConfig = { ...defaultConfig, ...config }
 
-  // Initialize faker with locale if specified
-  const fakerInstance = new Faker({ locale: [en] })
+  const fakerInstance = new Faker(/** @type {import('@faker-js/faker').FakerOptions} */ (mergedConfig.fakerConfig))
   const mcpClient = new MCPClient({ fakerInstance, serverUrl: mergedConfig.serverUrl, config: mergedConfig })
 
   try {
@@ -387,16 +354,5 @@ async function main(config) {
   }
 }
 
-// Export main function for programmatic usage
-export { MCPClient, main }
-
-// If running directly from command line, parse config from arguments
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const serverUrl = process.argv[2]
-  if (!serverUrl) {
-    logger.info('Usage: node src/index.js <server_url>')
-    process.exit(1)
-  }
-  // @ts-expect-error
-  main({ serverUrl }).then(() => process.exit(0))
-}
+// Export run function for programmatic usage
+export { run }
