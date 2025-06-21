@@ -77,6 +77,7 @@ class MCPClient {
   }
 
   async connectToServer() {
+    logger.info({ serverUrl: this.config.serverUrl }, 'Connecting to MCP server')
     try {
       // Initialize transport and connect to server
       await this.mcp.connect(this.transport)
