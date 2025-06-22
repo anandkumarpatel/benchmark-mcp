@@ -5,6 +5,7 @@ import dotenv from 'dotenv'
 import jq from 'node-jq'
 import metrics from './metrics.js'
 import { logger } from './logger.js'
+import runGeminiWithMCP from './aiClients/gemini-client.js'
 
 dotenv.config()
 
@@ -36,6 +37,7 @@ dotenv.config()
  * @property {ToolSequenceStep[]} [sequence] - Optional sequence of tool calls with data dependencies
  * @property {boolean} [runAll] - Optional run all tools
  * @property {import('@faker-js/faker').FakerOptions} [fakerConfig] - Configuration for Faker instance
+ * @property {{ prompt: string, client: 'gemini', config: import('./gemini-client.js').GeminiConfig }} [aiClient] - Prompt to run
  */
 
 async function assignInputMapping({ target, mapping, context }) {
@@ -280,7 +282,21 @@ class MCPClient {
 
     await this.callTool(randomTool, params)
   }
-
+  async runAIClient() {
+    const { prompt, client, config } = this.config.aiClient || {}
+    if (!prompt) {
+      throw new Error('Prompt is required')
+    }
+    if (!config) {
+      throw new Error('Client is required')
+    }
+    if (client === 'gemini') {
+      const result = await runGeminiWithMCP(prompt, this.mcp, config)
+      console.log(result)
+    } else {
+      throw new Error(`Unsupported AI client: ${client}`)
+    }
+  }
   async runLoadTest() {
     if (this.tools.length === 0) {
       logger.info('No tools available')
@@ -297,6 +313,8 @@ class MCPClient {
           await this.executeSequence(this.config.sequence)
         } else if (this.config.runAll) {
           await this.runAll()
+        } else if (this.config.aiClient) {
+          await this.runAIClient()
         } else {
           await this.runRandomToolCall()
         }
