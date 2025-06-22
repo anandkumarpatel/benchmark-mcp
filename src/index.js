@@ -6,6 +6,7 @@ import jq from 'node-jq'
 import metrics from './metrics.js'
 import { logger } from './logger.js'
 import runGeminiWithMCP from './aiClients/gemini-client.js'
+import runOpenAIWithMCP from './aiClients/chatgpt-client.js'
 
 dotenv.config()
 
@@ -37,7 +38,7 @@ dotenv.config()
  * @property {ToolSequenceStep[]} [sequence] - Optional sequence of tool calls with data dependencies
  * @property {boolean} [runAll] - Optional run all tools
  * @property {import('@faker-js/faker').FakerOptions} [fakerConfig] - Configuration for Faker instance
- * @property {{ prompt: string, client: 'gemini', config: import('./gemini-client.js').GeminiConfig }} [aiClient] - Prompt to run
+ * @property {{ prompt: string, client: 'gemini' | 'chatgpt', config: import('./aiClients/gemini-client.js').GeminiConfig | import('./aiClients/chatgpt-client.js').ChatGPTConfig }} [aiClient] - Prompt to run
  */
 
 async function assignInputMapping({ target, mapping, context }) {
@@ -282,6 +283,7 @@ class MCPClient {
 
     await this.callTool(randomTool, params)
   }
+
   async runAIClient() {
     const { prompt, client, config } = this.config.aiClient || {}
     if (!prompt) {
@@ -290,13 +292,17 @@ class MCPClient {
     if (!config) {
       throw new Error('Client is required')
     }
+    let result
     if (client === 'gemini') {
-      const result = await runGeminiWithMCP(prompt, this.mcp, config)
-      console.log(result)
+      result = await runGeminiWithMCP(prompt, this.mcp, config)
+    } else if (client === 'chatgpt') {
+      result = await runOpenAIWithMCP(prompt, this.config.serverUrl, config)
     } else {
       throw new Error(`Unsupported AI client: ${client}`)
     }
+    logger.debug({ result }, 'AI client result')
   }
+
   async runLoadTest() {
     if (this.tools.length === 0) {
       logger.info('No tools available')
@@ -319,7 +325,7 @@ class MCPClient {
           await this.runRandomToolCall()
         }
       } catch (err) {
-        logger.error(`Failed call ${i + 1}/${this.config.numCalls}:`, err)
+        logger.error({ error: err.message }, `Failed call ${i + 1}/${this.config.numCalls}:`)
       }
     }
 
