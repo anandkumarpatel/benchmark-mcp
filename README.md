@@ -181,7 +181,6 @@ Per-tool stats:
 - CLI management tool
 - oauth2 client support
 - pass-in auth / headers
-- AI client support
 - Output assertions
 - Support for one-shot tool calls without a persistent connection.
 - support env vars for config
