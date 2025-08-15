@@ -1,11 +1,34 @@
 {
-  "name": "mcp-client",
+  "name": "benchmark-mcp",
   "version": "1.0.0",
-  "description": "MCP client that randomly calls tools with random parameters",
+  "description": "Load test a Model Context Protocol server with random or scripted tools and parameters",
   "main": "src/index.js",
   "type": "module",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "types": "./index.d.ts"
+    }
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "client",
+    "load-testing",
+    "ai",
+    "tools"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anandkumarpatel/benchmark-mcp.git"
+  },
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node -e \"import('./src/index.js').then(m => console.log('✅ Module exports work:', Object.keys(m)))\"",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@faker-js/faker": "^9.8.0",

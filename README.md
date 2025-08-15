@@ -4,12 +4,54 @@ A Node.js client for running load tests against a Model Context Protocol (MCP) s
 
 ## Installation
 
+### As an npm package
+
+```bash
+npm install mcp-client
+```
+
+### From source
+
 1.  Clone this repository.
 2.  Install dependencies:
 
     ```bash
     npm install
     ```
+
+## Usage
+
+### As an npm package
+
+```javascript
+import { run, MCPClient } from 'mcp-client'
+
+// Simple usage with the run function
+await run({
+  serverUrl: 'http://localhost:8080',
+  numCalls: 3,
+  delayBetweenCalls: 100,
+})
+
+// Advanced usage with the MCPClient class
+import { Faker, en } from '@faker-js/faker'
+
+const fakerInstance = new Faker({ locale: [en] })
+const client = new MCPClient({
+  fakerInstance,
+  serverUrl: 'http://localhost:8080',
+  config: { numCalls: 2 },
+})
+
+try {
+  await client.connectToServer()
+  await client.runLoadTest()
+} finally {
+  await client.cleanup()
+}
+```
+
+See `example/usage.js` for more detailed examples.
 
 ## Quick Start
 

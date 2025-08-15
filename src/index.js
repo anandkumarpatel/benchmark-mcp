@@ -376,5 +376,4 @@ async function run(config) {
   }
 }
 
-// Export run function for programmatic usage
-export { run }
+export { run, MCPClient }
