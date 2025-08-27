@@ -170,12 +170,10 @@ class MCPClient {
     l.info({ tool: tool.name, params }, 'start tool call')
 
     const callStart = Date.now()
-    let success = false
-    let duration = 0
     const record = {
       toolName: tool.name,
-      success,
-      duration,
+      success: false,
+      duration: 0,
       error: null,
       result: null,
       args: params,
@@ -190,13 +188,13 @@ class MCPClient {
         throw new Error(result?.content?.[0]?.text)
       }
       l.info({ result }, 'finish tool call:')
-      success = true
+      record.success = true
       return result
     } catch (err) {
       record.error = err
       l.error({ error: err.message }, 'error tool call')
     } finally {
-      duration = Date.now() - callStart
+      record.duration = Date.now() - callStart
       metrics.record(record)
       if (this.config.delayBetweenCalls) {
         await new Promise((resolve) => setTimeout(resolve, this.config.delayBetweenCalls))
