@@ -171,25 +171,33 @@ class MCPClient {
 
     const callStart = Date.now()
     let success = false
-    let error = null
     let duration = 0
+    const record = {
+      toolName: tool.name,
+      success,
+      duration,
+      error: null,
+      result: null,
+      args: params,
+    }
     try {
       const result = await this.mcp.callTool({
         name: tool.name,
         arguments: params,
       })
+      record.result = result?.content?.[0]?.text
       if (result.isError) {
-        throw new Error(result?.content?.[0].text)
+        throw new Error(result?.content?.[0]?.text)
       }
       l.info({ result }, 'finish tool call:')
       success = true
       return result
     } catch (err) {
-      error = err
-      l.error({ error: error.message }, 'error tool call')
+      record.error = err
+      l.error({ error: err.message }, 'error tool call')
     } finally {
       duration = Date.now() - callStart
-      metrics.record(tool.name, success, duration, error)
+      metrics.record(record)
       if (this.config.delayBetweenCalls) {
         await new Promise((resolve) => setTimeout(resolve, this.config.delayBetweenCalls))
       }
@@ -204,7 +212,7 @@ class MCPClient {
       if (!tool) {
         const errMsg = `Tool ${step.toolName} not found`
         logger.error({ error: errMsg })
-        metrics.record(step.toolName, false, 0, errMsg)
+        metrics.record({ toolName: step.toolName, success: false, duration: 0, error: new Error(errMsg) })
         continue
       }
 
@@ -305,8 +313,7 @@ class MCPClient {
 
   async runLoadTest() {
     if (this.tools.length === 0) {
-      logger.info('No tools available')
-      return
+      throw new Error('No tools available')
     }
 
     const numCalls = this.config.numCalls || 1
@@ -330,6 +337,8 @@ class MCPClient {
     }
 
     metrics.printSummary()
+
+    return metrics.getSummary()
   }
 
   async cleanup() {
@@ -370,7 +379,7 @@ async function run(config) {
 
   try {
     await mcpClient.connectToServer()
-    await mcpClient.runLoadTest()
+    return await mcpClient.runLoadTest()
   } finally {
     await mcpClient.cleanup()
   }

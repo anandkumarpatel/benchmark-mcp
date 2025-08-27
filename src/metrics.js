@@ -15,18 +15,25 @@ class Metrics {
     this.perTool = {}
     /** @type {number} */
     this.startTime = Date.now()
+    /** @type {{args: Record<string, unknown>, result: unknown | null, error: Error | null}[]} */
+    this.details = []
   }
 
   /**
-   * Record the result of a tool call
-   * @param {string} toolName
-   * @param {boolean} success
-   * @param {number} duration
-   * @param {Error|string|null} [error]
-   */
-  record(toolName, success, duration, error = null) {
+   /**
+    * Record the result of a tool call
+    * @param {{
+    *   toolName: string,
+    *   success: boolean,
+    *   duration: number,
+    *   error?: Error|null,
+    *   result?: string | null,
+    *   args?: Record<string, unknown>
+    * }} params
+    */
+  record({ toolName, success, duration, error = null, result = null, args = {} }) {
     this.total++
-    this.responseTimes.push(duration)
+    this.details.push({ args, result, error })
     if (!this.perTool[toolName]) {
       this.perTool[toolName] = { total: 0, success: 0, failure: 0, responseTimes: [] }
     }
@@ -77,6 +84,7 @@ class Metrics {
       errors: this.errors,
       perTool: perToolStats,
       totalTime,
+      details: this.details,
     }
   }
 

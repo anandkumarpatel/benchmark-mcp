@@ -32,6 +32,33 @@ export interface LoadTestConfig {
   }
 }
 
+export interface ToolCallDetail {
+  args: Record<string, unknown>
+  result: unknown | null
+  error: Error | null
+}
+
+export interface PerToolStats {
+  total: number
+  success: number
+  failure: number
+  avg: number
+}
+
+export interface MetricsSummary {
+  total: number
+  success: number
+  failure: number
+  avg: number
+  median: number
+  p95: number
+  throughput: number
+  errors: Record<string, number>
+  perTool: Record<string, PerToolStats>
+  totalTime: number
+  details: ToolCallDetail[]
+}
+
 export declare class MCPClient {
   constructor(params: { fakerInstance: Faker; serverUrl: string; config: LoadTestConfig })
 
@@ -41,8 +68,8 @@ export declare class MCPClient {
   runAll(): Promise<void>
   runRandomToolCall(): Promise<void>
   runAIClient(): Promise<void>
-  runLoadTest(): Promise<void>
+  runLoadTest(): Promise<MetricsSummary>
   cleanup(): Promise<void>
 }
 
-export declare function run(config: LoadTestConfig): Promise<void>
+export declare function run(config: LoadTestConfig): Promise<MetricsSummary>
