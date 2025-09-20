@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import dotenv from 'dotenv'
 import jq from 'node-jq'
-import metrics from './metrics.js'
+import { Metrics } from './metrics.js'
 import { logger } from './logger.js'
 import runGeminiWithMCP from './aiClients/gemini-client.js'
 import runOpenAIWithMCP from './aiClients/chatgpt-client.js'
@@ -39,6 +39,7 @@ dotenv.config()
  * @property {boolean} [runAll] - Optional run all tools
  * @property {import('@faker-js/faker').FakerOptions} [fakerConfig] - Configuration for Faker instance
  * @property {{ prompt: string, client: 'gemini' | 'chatgpt', config: import('./aiClients/gemini-client.js').GeminiConfig | import('./aiClients/chatgpt-client.js').ChatGPTConfig }} [aiClient] - Prompt to run
+ * @property {import('./metrics.js').Metrics} [metrics] - Optional metrics instance to use for tracking
  */
 
 async function assignInputMapping({ target, mapping, context }) {
@@ -65,8 +66,9 @@ class MCPClient {
    * @param {Faker} params.fakerInstance - Faker instance for generating mock data
    * @param {string} params.serverUrl - URL of the MCP server to connect to
    * @param {LoadTestConfig} params.config - Optional configuration for load testing
+   * @param {import('./metrics.js').Metrics} params.metrics - Metrics instance for tracking
    */
-  constructor({ fakerInstance, serverUrl, config }) {
+  constructor({ fakerInstance, serverUrl, config, metrics }) {
     this.mcp = new Client({ name: 'mcp-client', version: '1.0.0' })
     this.tools = []
     this.faker = fakerInstance
@@ -74,6 +76,8 @@ class MCPClient {
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
     /** @type {LoadTestConfig} */
     this.config = config
+    /** @type {import('./metrics.js').Metrics} */
+    this.metrics = metrics || new Metrics()
   }
 
   async connectToServer() {
@@ -195,7 +199,7 @@ class MCPClient {
       l.error({ error: err.message }, 'error tool call')
     } finally {
       record.duration = Date.now() - callStart
-      metrics.record(record)
+      this.metrics.record(record)
       if (this.config.delayBetweenCalls) {
         await new Promise((resolve) => setTimeout(resolve, this.config.delayBetweenCalls))
       }
@@ -210,7 +214,7 @@ class MCPClient {
       if (!tool) {
         const errMsg = `Tool ${step.toolName} not found`
         logger.error({ error: errMsg })
-        metrics.record({ toolName: step.toolName, success: false, duration: 0, error: new Error(errMsg) })
+        this.metrics.record({ toolName: step.toolName, success: false, duration: 0, error: new Error(errMsg) })
         continue
       }
 
@@ -334,9 +338,9 @@ class MCPClient {
       }
     }
 
-    metrics.printSummary()
+    this.metrics.printSummary()
 
-    return metrics.getSummary()
+    return this.metrics.getSummary()
   }
 
   async cleanup() {
@@ -373,7 +377,12 @@ async function run(config) {
   const mergedConfig = { ...defaultConfig, ...config }
 
   const fakerInstance = new Faker(/** @type {import('@faker-js/faker').FakerOptions} */ (mergedConfig.fakerConfig))
-  const mcpClient = new MCPClient({ fakerInstance, serverUrl: mergedConfig.serverUrl, config: mergedConfig })
+  const mcpClient = new MCPClient({
+    fakerInstance,
+    serverUrl: mergedConfig.serverUrl,
+    config: mergedConfig,
+    metrics: mergedConfig.metrics || new Metrics(),
+  })
 
   try {
     await mcpClient.connectToServer()
@@ -383,4 +392,4 @@ async function run(config) {
   }
 }
 
-export { run, MCPClient }
+export { run, MCPClient, Metrics }

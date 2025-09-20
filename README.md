@@ -24,7 +24,7 @@ npm install mcp-client
 ### As an npm package
 
 ```javascript
-import { run, MCPClient } from 'mcp-client'
+import { run, MCPClient, Metrics } from 'mcp-client'
 
 // Simple usage with the run function
 await run({
@@ -37,10 +37,12 @@ await run({
 import { Faker, en } from '@faker-js/faker'
 
 const fakerInstance = new Faker({ locale: [en] })
+const metrics = new Metrics() // Optional: create shared metrics instance
 const client = new MCPClient({
   fakerInstance,
   serverUrl: 'http://localhost:8080',
   config: { numCalls: 2 },
+  metrics, // Pass shared metrics instance
 })
 
 try {
@@ -86,6 +88,7 @@ The load test is configured via a `LoadTestConfig` object. You can either modify
 | `mockData`          | `MockDataConfig`                          | Configuration for mock data generation using `@faker-js/faker`.                                           | See `mockData` section below.           |
 | `sequence`          | `ToolSequenceStep[]`                      | An array defining a sequence of tool calls. This enables Sequence Mode.                                   | `undefined`                             |
 | `runAll`            | `boolean`                                 | If `true` and `sequence` is not set, runs all available tools once per `numCalls` iteration.              | `false`                                 |
+| `metrics`           | `Metrics`                                 | Optional metrics instance to use for tracking. If not provided, a new instance will be created.           | `undefined` (creates new instance)      |
 
 ### `mockData` Configuration
 
@@ -196,6 +199,44 @@ const config = {
   },
 }
 ```
+
+## Metrics and Tracking
+
+The library includes a `Metrics` class that tracks performance data during load tests. You can create and share a single `Metrics` instance across multiple runs to aggregate data from different test sessions. You can also create your own Metrics type to send metrics to a custom metrics store.
+
+### Using Shared Metrics Instances
+
+```javascript
+import { run, Metrics } from 'mcp-client'
+
+// Create a shared metrics instance
+const sharedMetrics = new Metrics()
+
+// Run multiple load tests with the same metrics instance
+await run({
+  serverUrl: 'http://localhost:8080',
+  numCalls: 10,
+  metrics: sharedMetrics, // Share the same instance
+})
+
+await run({
+  serverUrl: 'http://localhost:8080',
+  numCalls: 15,
+  metrics: sharedMetrics, // Continue adding to the same metrics
+})
+
+// Get aggregated results from all runs
+const summary = sharedMetrics.getSummary()
+console.log('Total across all runs:', summary.total)
+```
+
+### Metrics Class Methods
+
+The `Metrics` class provides several methods for tracking and analyzing performance:
+
+- `record(params)`: Records a single tool call result
+- `getSummary()`: Returns detailed statistics including averages, percentiles, and per-tool breakdowns
+- `printSummary()`: Prints a formatted summary to the console
 
 ## Output
 

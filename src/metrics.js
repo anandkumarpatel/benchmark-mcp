@@ -1,5 +1,5 @@
 // Metrics class for load testing
-class Metrics {
+export class Metrics {
   constructor() {
     /** @type {number} */
     this.total = 0
@@ -109,6 +109,3 @@ class Metrics {
     }
   }
 }
-
-const metricsInstance = new Metrics()
-export default metricsInstance
