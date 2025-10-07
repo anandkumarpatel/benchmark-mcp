@@ -73,7 +73,12 @@ class MCPClient {
     this.tools = []
     this.faker = fakerInstance
     this.sequenceContext = {}
-    this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
+    
+    const transportOpts = {}
+    if (config.headers) {
+      transportOpts.requestInit = { headers: config.headers }
+    }
+    this.transport = new StreamableHTTPClientTransport(new URL(serverUrl), transportOpts)
     /** @type {LoadTestConfig} */
     this.config = config
     /** @type {import('./metrics.js').Metrics} */

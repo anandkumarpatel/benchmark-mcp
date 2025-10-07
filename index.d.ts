@@ -16,6 +16,7 @@ export interface MockDataConfig {
 
 export interface LoadTestConfig {
   serverUrl: string
+  headers?: Record<string, string> // headers for when we connect to serverUrl 
   numCalls?: number
   delayBetweenCalls?: number
   toolNames?: string[]
