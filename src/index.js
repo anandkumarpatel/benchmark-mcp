@@ -79,7 +79,6 @@ class MCPClient {
       transportOpts.requestInit = { headers: config.headers }
     }
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl), transportOpts)
-    this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
     /** @type {LoadTestConfig} */
     this.config = config
     /** @type {import('./metrics.js').Metrics} */
