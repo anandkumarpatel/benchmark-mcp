@@ -29,6 +29,7 @@ dotenv.config()
 /**
  * @typedef {Object} LoadTestConfig
  * @property {string} serverUrl - URL of the MCP server
+ * @property {Record<string, string>} [headers] - Optional headers to send with the request
  * @property {number} [numCalls] - Number of tool calls to make (default: 1)
  * @property {number} [delayBetweenCalls] - Delay in milliseconds between calls
  * @property {string[]} [toolNames] - Optional list of specific tool names to call
@@ -73,6 +74,11 @@ class MCPClient {
     this.tools = []
     this.faker = fakerInstance
     this.sequenceContext = {}
+    const transportOpts = {}
+    if (config.headers) {
+      transportOpts.requestInit = { headers: config.headers }
+    }
+    this.transport = new StreamableHTTPClientTransport(new URL(serverUrl), transportOpts)
     this.transport = new StreamableHTTPClientTransport(new URL(serverUrl))
     /** @type {LoadTestConfig} */
     this.config = config
